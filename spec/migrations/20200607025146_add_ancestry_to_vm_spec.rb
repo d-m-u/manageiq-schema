@@ -4,99 +4,59 @@ describe AddAncestryToVm do
   let(:rel_stub) { migration_stub(:Relationship) }
   let(:vm_stub) { migration_stub :VmOrTemplate }
   let(:vm) { vm_stub.create! }
-  let(:vm2) { vm_stub.create! }
-  let(:vm3) { vm_stub.create! }
-  let(:vm4) { vm_stub.create! }
-  let(:vm5) { vm_stub.create! }
-  let(:vm6) { vm_stub.create! }
-  let(:root) { vm_stub.create! }
-  let(:vm7) { vm_stub.create! }
-  let(:vm8) { vm_stub.create! }
 
   migration_context :up do
-    context "single parent/child rel" do
+    context "parent/child/grandchild rel" do
+      #           a
+      #         child
+      #       grandchild
       it 'updates ancestry' do
-        parent_rel = rel_stub.create!(:relationship => 'genealogy', :ancestry => nil, :resource_type => 'VmOrTemplate', :resource_id => root.id)
-        rel_stub.create!(:relationship => 'genealogy', :ancestry => parent_rel.id, :resource_type => 'VmOrTemplate', :resource_id => vm.id)
+        parent = vm_stub.create!
+        child = vm_stub.create!
+        grandchild = vm_stub.create!
+        parent_rel = create_rel(parent, 'genealogy')
+        child_rel = create_rel(child, 'genealogy', ancestry_for(parent_rel))
+        create_rel(grandchild, 'genealogy', ancestry_for(child_rel, parent_rel))
 
         migrate
 
-        expect(vm.reload.ancestry).to eq(root.id.to_s)
-        expect(root.reload.ancestry).to eq(nil)
-        expect(rel_stub.count).to eq(0)
-      end
-    end
-
-    context "slightly more complicated tree" do
-      it 'updates ancestry' do
-        parent_rel = rel_stub.create!(:relationship => 'genealogy', :ancestry => nil, :resource_type => 'VmOrTemplate', :resource_id => root.id)
-        child_rel = rel_stub.create!(:relationship => 'genealogy', :ancestry => parent_rel.id, :resource_type => 'VmOrTemplate', :resource_id => vm.id)
-        rel_stub.create!(:relationship => 'genealogy', :ancestry => child_rel.id.to_s + '/' + parent_rel.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm2.id)
-
-        migrate
-
-        expect(vm.reload.ancestry).to eq(root.id.to_s)
-        expect(vm2.reload.ancestry).to eq("#{vm.id}/#{root.id}")
-        expect(root.reload.ancestry).to eq(nil)
+        expect(child.reload.ancestry).to eq(ancestry_for(parent))
+        expect(grandchild.reload.ancestry).to eq(ancestry_for(child, parent))
+        expect(parent.reload.ancestry).to eq(nil)
         expect(rel_stub.count).to eq(0)
       end
     end
 
     context "complicated tree" do
-      #           a
-      #      b         c
-      #      d         g
-      #    e   f
       it 'updates ancestry' do
-        rel_a = rel_stub.create!(:relationship => 'genealogy', :ancestry => nil, :resource_type => 'VmOrTemplate', :resource_id => root.id)
-        rel_c = rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_a.id, :resource_type => 'VmOrTemplate', :resource_id => vm.id)
-        rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_c.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm2.id)
-        rel_b = rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm3.id)
-        rel_d = rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_b.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm4.id)
-        rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_d.id.to_s + '/' + rel_b.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm5.id)
-        rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_d.id.to_s + '/' + rel_b.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm6.id)
+        #           a
+        #      b         c
+        #      d         g
+        #    e   f
+        a = vm_stub.create!
+        b = vm_stub.create!
+        c = vm_stub.create!
+        d = vm_stub.create!
+        e = vm_stub.create!
+        f = vm_stub.create!
+        g = vm_stub.create!
+
+        a_rel = create_rel(a, 'genealogy')
+        b_rel = create_rel(b, 'genealogy', ancestry_for(a_rel))
+        c_rel = create_rel(c, 'genealogy', ancestry_for(a_rel))
+        d_rel = create_rel(d, 'genealogy', ancestry_for(b_rel, a_rel))
+        create_rel(e, 'genealogy', ancestry_for(d_rel, b_rel, a_rel))    # e_rel
+        create_rel(f, 'genealogy', ancestry_for(d_rel, b_rel, a_rel))    # f_rel
+        create_rel(g, 'genealogy', ancestry_for(c_rel, a_rel))           # g_rel
 
         migrate
 
-        expect(vm5.reload.ancestry).to eq("#{vm4.id}/#{vm3.id}/#{root.id}")
-        expect(vm6.reload.ancestry).to eq("#{vm4.id}/#{vm3.id}/#{root.id}")
-        expect(vm3.reload.ancestry).to eq(root.id.to_s)
-        expect(vm.reload.ancestry).to eq(root.id.to_s)
-        expect(vm2.reload.ancestry).to eq("#{vm.id}/#{root.id}")
-        expect(root.reload.ancestry).to eq(nil)
-        expect(rel_stub.count).to eq(0)
-      end
-    end
-
-    context "order is preserved" do
-      #      rel vm
-      #      a   root
-      #      b   3
-      #      d   4
-      #      e   6
-      #      c   vm
-      #      f   2
-      #      g   7
-      #      h   8
-      it 'updates ancestry' do
-        rel_a = rel_stub.create!(:relationship => 'genealogy', :ancestry => nil, :resource_type => 'VmOrTemplate', :resource_id => root.id)
-        rel_b = rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm3.id)
-        rel_d = rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_b.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm4.id)
-        rel_e = rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_d.id.to_s + '/' + rel_b.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm6.id)
-        rel_c = rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_e.id.to_s + '/' + rel_d.id.to_s + '/' + rel_b.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm.id)
-        rel_f = rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_c.id.to_s + '/' + rel_e.id.to_s + '/' + rel_d.id.to_s + '/' + rel_b.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm2.id)
-        rel_g = rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_f.id.to_s + '/' + rel_c.id.to_s + '/' + rel_e.id.to_s + '/' + rel_d.id.to_s + '/' + rel_b.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm7.id)
-        rel_stub.create!(:relationship => 'genealogy', :ancestry => rel_g.id.to_s + '/' + rel_f.id.to_s + '/' + rel_c.id.to_s + '/' + rel_e.id.to_s + '/' + rel_d.id.to_s + '/' + rel_b.id.to_s + '/' + rel_a.id.to_s, :resource_type => 'VmOrTemplate', :resource_id => vm8.id)
-
-        migrate
-
-        expect(vm2.reload.ancestry).to eq("#{vm.id}/#{vm6.id}/#{vm4.id}/#{vm3.id}/#{root.id}")
-        expect(vm6.reload.ancestry).to eq("#{vm4.id}/#{vm3.id}/#{root.id}")
-        expect(vm3.reload.ancestry).to eq(root.id.to_s)
-        expect(vm.reload.ancestry).to eq("#{vm6.id}/#{vm4.id}/#{vm3.id}/#{root.id}")
-        expect(vm7.reload.ancestry).to eq("#{vm2.id}/#{vm.id}/#{vm6.id}/#{vm4.id}/#{vm3.id}/#{root.id}")
-        expect(vm8.reload.ancestry).to eq("#{vm7.id}/#{vm2.id}/#{vm.id}/#{vm6.id}/#{vm4.id}/#{vm3.id}/#{root.id}")
-        expect(root.reload.ancestry).to eq(nil)
+        expect(a.reload.ancestry).to eq(nil)
+        expect(b.reload.ancestry).to eq(ancestry_for(a))
+        expect(c.reload.ancestry).to eq(ancestry_for(a))
+        expect(g.reload.ancestry).to eq(ancestry_for(c, a))
+        expect(e.reload.ancestry).to eq(ancestry_for(d, b, a))
+        expect(f.reload.ancestry).to eq(ancestry_for(d, b, a))
         expect(rel_stub.count).to eq(0)
       end
     end
@@ -111,41 +71,34 @@ describe AddAncestryToVm do
 
     context "with only ems_metadata relationship tree" do
       it 'sets nothing' do
-        parent_rel = rel_stub.create!(:relationship => 'ems_metadata', :ancestry => nil, :resource_type => 'VmOrTemplate', :resource_id => root.id)
-        rel_stub.create!(:relationship => 'ems_metadata', :ancestry => parent_rel.id, :resource_type => 'VmOrTemplate', :resource_id => vm.id)
+        parent = vm_stub.create!
+        child = vm_stub.create!
+        parent_rel = create_rel(parent, 'ems_metadata')
+        create_rel(child, 'ems_metadata', ancestry_for(parent_rel))
 
         migrate
 
-        expect(vm.reload.ancestry).to eq(nil)
-        expect(root.reload.ancestry).to eq(nil)
-        expect(rel_stub.count).to eq(2)
-      end
-    end
-
-    context "with rel type that isn't vm_or_template" do
-      it 'sets nothing' do
-        parent_rel = rel_stub.create!(:relationship => 'ems_metadata', :ancestry => nil, :resource_type => 'Host', :resource_id => root.id)
-        rel_stub.create!(:relationship => 'ems_metadata', :ancestry => parent_rel.id, :resource_type => 'Host', :resource_id => vm.id)
-
-        migrate
-
-        expect(vm.reload.ancestry).to eq(nil)
-        expect(root.reload.ancestry).to eq(nil)
+        expect(child.reload.ancestry).to eq(nil)
+        expect(parent.reload.ancestry).to eq(nil)
         expect(rel_stub.count).to eq(2)
       end
     end
 
     context "with both genealogy and ems_metadata rels" do
       it 'only sets ancestry from genealogy rels' do
-        invalid_parent_rel = rel_stub.create!(:relationship => 'ems_metadata', :ancestry => nil, :resource_type => 'VmOrTemplate', :resource_id => root.id)
-        rel_stub.create!(:relationship => 'ems_metadata', :ancestry => invalid_parent_rel.id, :resource_type => 'VmOrTemplate', :resource_id => vm.id)
-        parent_rel = rel_stub.create!(:relationship => 'genealogy', :ancestry => nil, :resource_type => 'VmOrTemplate', :resource_id => root.id)
-        rel_stub.create!(:relationship => 'genealogy', :ancestry => parent_rel.id, :resource_type => 'VmOrTemplate', :resource_id => vm.id)
+        parent = vm_stub.create!
+        child = vm_stub.create!
+        ems_metadata_parent = vm_stub.create!
+        ems_metadata_child = vm_stub.create!
+        ems_metadata_parent_rel = create_rel(ems_metadata_parent, 'ems_metadata')
+        create_rel(ems_metadata_child, 'ems_metadata', ancestry_for(ems_metadata_parent_rel))   # ems_metadata_child_rel
+        parent_rel = create_rel(parent, 'genealogy')
+        create_rel(child, 'genealogy', ancestry_for(parent_rel))                                # child_rel
 
         migrate
 
-        expect(vm.reload.ancestry).to eq(root.id.to_s)
-        expect(root.reload.ancestry).to eq(nil)
+        expect(child.reload.ancestry).to eq(ancestry_for(parent))
+        expect(parent.reload.ancestry).to eq(nil)
         expect(rel_stub.count).to eq(2)
       end
     end
@@ -177,5 +130,13 @@ describe AddAncestryToVm do
         expect(rel.resource_id).to eq(vm.id)
       end
     end
+  end
+
+  def ancestry_for(*nodes)
+    nodes.map(&:id).join("/").presence
+  end
+
+  def create_rel(resource, relationship, ancestors = nil)
+    rel_stub.create!(:relationship => relationship, :ancestry => ancestors.nil? ? nil : ancestors, :resource_type => 'VmOrTemplate', :resource_id => resource.id)
   end
 end
