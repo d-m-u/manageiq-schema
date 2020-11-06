@@ -4,10 +4,11 @@ describe AddAncestryToVm do
   let(:rel_stub) { migration_stub(:Relationship) }
   let(:vm_stub) { migration_stub :VmOrTemplate }
   let(:vm) { vm_stub.create! }
+  let(:all_relationships) { rel_stub.all }
 
   migration_context :up do
     context "parent/child/grandchild rel" do
-      #           a
+      #         parent
       #         child
       #       grandchild
       it 'updates ancestry' do
@@ -61,23 +62,17 @@ describe AddAncestryToVm do
       end
     end
 
-    context "vm without rels" do
-      it 'nil ancestry' do
-        migrate
-
-        expect(vm_stub.find(vm.id).ancestry).to eq(nil)
-      end
-    end
-
     context "with only ems_metadata relationship tree" do
       it 'sets nothing' do
         parent = vm_stub.create!
         child = vm_stub.create!
         parent_rel = create_rel(parent, 'ems_metadata')
         create_rel(child, 'ems_metadata', ancestry_for(parent_rel))
+        vm
 
         migrate
 
+        expect(vm.reload.ancestry).to eq(nil)
         expect(child.reload.ancestry).to eq(nil)
         expect(parent.reload.ancestry).to eq(nil)
         expect(rel_stub.count).to eq(2)
@@ -105,29 +100,51 @@ describe AddAncestryToVm do
   end
 
   migration_context :down do
-    context "multiple rels" do
-      let!(:vm) { vm_stub.create!(:ancestry => '6/5/4') }
+    context "covalent bond" do
+      let(:vm) { vm_stub.create }
+      let(:child) { vm_stub.create(:ancestry => ancestry_for(vm)) }
       it 'creates rel and removes ancestry' do
+        vm
+        child
+
         migrate
 
-        rel = rel_stub.first
-        expect(rel.relationship).to eq('genealogy')
-        expect(rel.ancestry).to eq('6/5/4')
-        expect(rel.resource_type).to eq('VmOrTemplate')
-        expect(rel.resource_id).to eq(vm.id)
+        vm_rel = find_rel(vm)
+        child_rel = find_rel(child)
+        expect(child_rel.relationship).to eq('genealogy')
+        expect(child_rel.ancestry).to eq(vm_rel.id.to_s)
+        expect(child_rel.resource_type).to eq('VmOrTemplate')
+        expect(child_rel.resource_id).to eq(child.id)
+        expect(vm_rel.relationship).to eq('genealogy')
+        expect(vm_rel.ancestry).to eq(nil)
+        expect(vm_rel.resource_type).to eq('VmOrTemplate')
+        expect(vm_rel.resource_id).to eq(vm.id)
       end
     end
 
-    context "single rel" do
-      let!(:vm) { vm_stub.create!(:ancestry => '645') }
-      it 'creates rel and removes ancestry' do
+    context "complicated tree" do
+      it 'updates ancestry' do
+        #           a
+        #      b         c
+        #      d         g
+        #    e   f
+        a = vm_stub.create!
+        b = vm_stub.create!(:ancestry => ancestry_for(a))
+        c = vm_stub.create!(:ancestry => ancestry_for(a))
+        d = vm_stub.create!(:ancestry => ancestry_for(b, a))
+        e = vm_stub.create!(:ancestry => ancestry_for(d, b, a))
+        f = vm_stub.create!(:ancestry => ancestry_for(d, b, a))
+        g = vm_stub.create!(:ancestry => ancestry_for(c, a))
+
         migrate
 
-        rel = rel_stub.first
-        expect(rel.relationship).to eq('genealogy')
-        expect(rel.ancestry).to eq('645')
-        expect(rel.resource_type).to eq('VmOrTemplate')
-        expect(rel.resource_id).to eq(vm.id)
+        expect(find_rel(a).ancestry).to eq(nil)
+        expect(find_rel(b).ancestry).to eq(ancestry_for(find_rel(a)))
+        expect(find_rel(c).ancestry).to eq(ancestry_for(find_rel(a)))
+        expect(find_rel(g).ancestry).to eq(ancestry_for(find_rel(c), find_rel(a)))
+        expect(find_rel(e).ancestry).to eq(ancestry_for(find_rel(d), find_rel(b), find_rel(a)))
+        expect(find_rel(f).ancestry).to eq(ancestry_for(find_rel(d), find_rel(b), find_rel(a)))
+        expect(rel_stub.count).to eq(7)
       end
     end
   end
@@ -138,5 +155,9 @@ describe AddAncestryToVm do
 
   def create_rel(resource, relationship, ancestors = nil)
     rel_stub.create!(:relationship => relationship, :ancestry => ancestors.nil? ? nil : ancestors, :resource_type => 'VmOrTemplate', :resource_id => resource.id)
+  end
+
+  def find_rel(obj)
+    all_relationships.detect { |r| r.resource_id == obj.id }
   end
 end
