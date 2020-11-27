@@ -4,7 +4,7 @@ describe AddAncestryToVm do
   let(:rel_stub) { migration_stub(:Relationship) }
   let(:vm_stub) { migration_stub :VmOrTemplate }
   let(:vm) { vm_stub.create! }
-  let(:all_relationships) { rel_stub.all }
+  let(:default_rel_type) { 'genealogy' }
 
   migration_context :up do
     context "parent/child/grandchild rel" do
@@ -12,18 +12,14 @@ describe AddAncestryToVm do
       #         child
       #       grandchild
       it 'updates ancestry' do
-        parent = vm_stub.create!
-        child = vm_stub.create!
-        grandchild = vm_stub.create!
-        parent_rel = create_rel(parent, 'genealogy')
-        child_rel = create_rel(child, 'genealogy', ancestry_for(parent_rel))
-        create_rel(grandchild, 'genealogy', ancestry_for(child_rel, parent_rel))
+        tree = create_tree(:parent => {:child => :grandchild})
+        parent, child, grandchild = tree[:parent], tree[:child], tree[:grandchild]
 
         migrate
 
+        expect(parent.reload.ancestry).to eq(nil)
         expect(child.reload.ancestry).to eq(ancestry_for(parent))
         expect(grandchild.reload.ancestry).to eq(ancestry_for(child, parent))
-        expect(parent.reload.ancestry).to eq(nil)
         expect(rel_stub.count).to eq(0)
       end
     end
@@ -34,21 +30,8 @@ describe AddAncestryToVm do
         #      b         c
         #      d         g
         #    e   f
-        a = vm_stub.create!
-        b = vm_stub.create!
-        c = vm_stub.create!
-        d = vm_stub.create!
-        e = vm_stub.create!
-        f = vm_stub.create!
-        g = vm_stub.create!
-
-        a_rel = create_rel(a, 'genealogy')
-        b_rel = create_rel(b, 'genealogy', ancestry_for(a_rel))
-        c_rel = create_rel(c, 'genealogy', ancestry_for(a_rel))
-        d_rel = create_rel(d, 'genealogy', ancestry_for(b_rel, a_rel))
-        create_rel(e, 'genealogy', ancestry_for(d_rel, b_rel, a_rel))    # e_rel
-        create_rel(f, 'genealogy', ancestry_for(d_rel, b_rel, a_rel))    # f_rel
-        create_rel(g, 'genealogy', ancestry_for(c_rel, a_rel))           # g_rel
+        tree = create_tree(:a => [{:c => :g}, {:b => {:d => [:e, :f]}}])
+        a, b, c, d, e, f, g = tree[:a], tree[:b], tree[:c], tree[:d], tree[:e], tree[:f], tree[:g]
 
         migrate
 
@@ -62,37 +45,23 @@ describe AddAncestryToVm do
       end
     end
 
-    context "with only ems_metadata relationship tree" do
-      it 'sets nothing' do
-        parent = vm_stub.create!
-        child = vm_stub.create!
-        parent_rel = create_rel(parent, 'ems_metadata')
-        create_rel(child, 'ems_metadata', ancestry_for(parent_rel))
-        vm
-
+    context "vm without rels" do
+      it 'nil ancestry' do
         migrate
 
-        expect(vm.reload.ancestry).to eq(nil)
-        expect(child.reload.ancestry).to eq(nil)
-        expect(parent.reload.ancestry).to eq(nil)
-        expect(rel_stub.count).to eq(2)
+        expect(vm_stub.find(vm.id).ancestry).to eq(nil)
       end
     end
 
-    context "with both genealogy and ems_metadata rels" do
-      it 'only sets ancestry from genealogy rels' do
-        parent = vm_stub.create!
-        child = vm_stub.create!
-        ems_metadata_parent = vm_stub.create!
-        ems_metadata_child = vm_stub.create!
-        ems_metadata_parent_rel = create_rel(ems_metadata_parent, 'ems_metadata')
-        create_rel(ems_metadata_child, 'ems_metadata', ancestry_for(ems_metadata_parent_rel))   # ems_metadata_child_rel
-        parent_rel = create_rel(parent, 'genealogy')
-        create_rel(child, 'genealogy', ancestry_for(parent_rel))                                # child_rel
+    context "with only ems_metadata relationship tree" do
+      let(:default_rel_type) { 'ems_metadata' }
+      it 'does not set vm ancestry' do
+        tree = create_tree(:parent => :child)
+        parent, child = tree[:parent], tree[:child]
 
         migrate
 
-        expect(child.reload.ancestry).to eq(ancestry_for(parent))
+        expect(child.reload.ancestry).to eq(nil)
         expect(parent.reload.ancestry).to eq(nil)
         expect(rel_stub.count).to eq(2)
       end
@@ -100,41 +69,14 @@ describe AddAncestryToVm do
   end
 
   migration_context :down do
-    context "covalent bond" do
-      let(:vm) { vm_stub.create }
-      let(:child) { vm_stub.create(:ancestry => ancestry_for(vm)) }
-      it 'creates rel and removes ancestry' do
-        vm
-        child
-
-        migrate
-
-        vm_rel = find_rel(vm)
-        child_rel = find_rel(child)
-        expect(child_rel.relationship).to eq('genealogy')
-        expect(child_rel.ancestry).to eq(vm_rel.id.to_s)
-        expect(child_rel.resource_type).to eq('VmOrTemplate')
-        expect(child_rel.resource_id).to eq(child.id)
-        expect(vm_rel.relationship).to eq('genealogy')
-        expect(vm_rel.ancestry).to eq(nil)
-        expect(vm_rel.resource_type).to eq('VmOrTemplate')
-        expect(vm_rel.resource_id).to eq(vm.id)
-      end
-    end
-
     context "complicated tree" do
       it 'updates ancestry' do
         #           a
         #      b         c
         #      d         g
         #    e   f
-        a = vm_stub.create!
-        b = vm_stub.create!(:ancestry => ancestry_for(a))
-        c = vm_stub.create!(:ancestry => ancestry_for(a))
-        d = vm_stub.create!(:ancestry => ancestry_for(b, a))
-        e = vm_stub.create!(:ancestry => ancestry_for(d, b, a))
-        f = vm_stub.create!(:ancestry => ancestry_for(d, b, a))
-        g = vm_stub.create!(:ancestry => ancestry_for(c, a))
+        tree = create_tree(:a => [{:c => :g}, {:b => {:d => [:e, :f]}}])
+        a, b, c, d, e, f, g = tree[:a], tree[:b], tree[:c], tree[:d], tree[:e], tree[:f], tree[:g]
 
         migrate
 
@@ -147,17 +89,48 @@ describe AddAncestryToVm do
         expect(rel_stub.count).to eq(7)
       end
     end
+
   end
+
+  private
 
   def ancestry_for(*nodes)
-    nodes.map(&:id).join("/").presence
-  end
-
-  def create_rel(resource, relationship, ancestors = nil)
-    rel_stub.create!(:relationship => relationship, :ancestry => ancestors.nil? ? nil : ancestors, :resource_type => 'VmOrTemplate', :resource_id => resource.id)
+    nodes.map(&:id).presence.join("/")
   end
 
   def find_rel(obj)
-    all_relationships.detect { |r| r.resource_id == obj.id }
+    rel_stub.all.detect { |r| r.resource_id == obj.id }
+  end
+
+  def create_tree(tree, relationship = default_rel_type)
+    resources = {}
+    traverse(tree, []) { |_, id| resources.merge!(id => vm_stub.create!) }
+
+    traverse(tree, []) do |parents, id|
+      ancestry = if parents.present?
+        parents.reverse.map { |s| rel_stub.find_by(:resource_id => resources[s].id).id }.compact.join('/')
+      else
+        nil
+      end
+      rel_stub.create!(:ancestry => ancestry, :resource_id => resources[id].id, :resource_type => 'VmOrTemplate', :relationship => relationship)
+    end
+
+    resources
+  end
+
+  def traverse(tree, parent, &block)
+    case tree
+    when Symbol || String
+      yield(parent, tree)
+    when Array
+      tree.each { |node| traverse(node, parent, &block) }
+    when Hash
+      tree.each do |key, children|
+        yield(parent, key)
+        traverse(children, parent + [key], &block)
+      end
+    else
+      "oh no"
+    end
   end
 end
